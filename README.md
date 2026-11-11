@@ -1,6 +1,6 @@
 # Reaction-wheel inverted pendulum
 
-*Build and identification notebook. Hardware, firmware, system identification, control design, and the debugging that took it from falling in a fraction of a second to a 126-second balance.*
+*Build and identification notebook. Hardware, firmware, system identification, control design, the debugging that took it from falling in a fraction of a second to a 126-second balance, and a swing-up from hanging (section 10).*
 
 <table>
 <tr>
@@ -10,6 +10,14 @@
 <tr>
 <td><em>The finished pendulum. Green printed stand and pivot block, grey stop arch with foam pads, 4015 motor and 80&nbsp;mm flywheel on top, ESC in its box at the right.</em></td>
 <td><em>Balancing upright on its own (click for the full-quality video, <code>media/balancing.mp4</code>).</em></td>
+</tr>
+<tr>
+<td><img src="media/swingup_setup.jpg" alt="The pendulum clamped at the table edge for swing-up, stop arch removed"></td>
+<td><a href="media/swingup.mp4"><img src="media/swingup.gif" alt="The pendulum swinging itself up from hanging and catching itself upright"></a></td>
+</tr>
+<tr>
+<td><em>Set up for swing-up: stop arch off, stand clamped at the table edge so the bar swings a full circle clear of everything.</em></td>
+<td><em>Swinging itself up from hanging and catching itself upright, 11 Nov (click for the full video, <code>media/swingup.mp4</code>).</em></td>
 </tr>
 </table>
 
@@ -111,7 +119,7 @@ The rule for this box: every cable leaves through a connector held **in the wall
 
 ### 2.5 Cable routing (the final fix)
 
-Eight wires leave the moving bar: three thick motor phases and five thin encoder wires. They turned out to matter more than anything else on this list (section 7, step 7). What works:
+Eight wires leave the moving bar: three thick motor phases and five thin encoder wires. They turned out to matter more than anything else on this list (section 8, step 7). What works:
 
 - Twist the phase wires together, and twist the three AS5048A wires.
 - Phase wires leave the shaft to the **left**, encoder wires to the **right**, so their stiffness pulls in opposite directions and largely cancels.
@@ -154,7 +162,7 @@ Records the tilt and the wheel at 5 ms and streams CSV to `sysid.py`.
 | `rec U<v>` | Hold a steady voltage: wheel top speed per volt |
 | `fit` | Fit the nonlinear model to every recording, write `model.txt`, plot |
 
-### 4.2 `esc1_balance.ino` v3.6: the balance controller
+### 4.2 `esc1_balance.ino` (v3.6 balance, v4.2 adds swing-up)
 
 One 1 ms step:
 
@@ -191,10 +199,13 @@ u += constrain(uNew - u, -SLEW, SLEW);           // slew limit
 | `L` | Live readout on/off |
 | `P` | Dump the last 2 s as CSV: `t_ms, theta_deg, theta_raw_deg, wheel_rad_s, u_V, vbus_V` |
 | `I` | Recalibrate the motor |
+| `S` | (v4) Swing up from hanging (section 10). Stop arch off |
+| `H` | (v4.2) Re-measure the hanging reading and correct the balance point by any change (a slipped hub) |
+| space, `x`, Esc | (v4.1) Stop at once, no Enter needed |
 
 **Stops:** tilt past 25°; motor at the voltage limit for 1 s; wheel above 75 rad/s for 20 ms; no tilt reading for 20 ms.
 
-The live line is short (fits the serial buffer) and only goes out every 200 ms while balancing, because a long one stalled the loop for 6 ms (section 7, step 5).
+The live line is short (fits the serial buffer) and only goes out every 200 ms while balancing, because a long one stalled the loop for 6 ms (section 8, step 5).
 
 ### 4.3 Reading the AS5048A with a timer, not an interrupt
 
@@ -273,7 +284,7 @@ The motor's torque is internal to the bar-plus-wheel system, so only gravity and
 
 $$\dot p = \lambda^2 \sin\theta - c\,\dot\theta$$
 
-The observer predicts θ and p, corrects them with the tilt reading, and recovers the tilt rate from p and the measured wheel speed. Gains L = [0.1014, 5.480] (tuned with process noise q_p = 3, deliberately slow; see section 7, step 4).
+The observer predicts θ and p, corrects them with the tilt reading, and recovers the tilt rate from p and the measured wheel speed. Gains L = [0.1014, 5.480] (tuned with process noise q_p = 3, deliberately slow; see section 8, step 4).
 
 **Innovation gate:** a tilt reading more than 1° from the prediction is discarded. After 20 in a row it accepts them again, so a real disturbance can't lock the observer out.
 
@@ -289,7 +300,7 @@ LQR's classical guarantee is a gain margin of [0.5, ∞). On the real loop, with
 
 ### 6.3 Slew limit
 
-The motor voltage may change by at most 0.3 V per 1 ms step. This removes the sharp steps that disturbed the tilt reading (section 7, step 4).
+The motor voltage may change by at most 0.3 V per 1 ms step. This removes the sharp steps that disturbed the tilt reading (section 8, step 4).
 
 ### 6.4 Self-trim of the balance point
 
@@ -382,40 +393,88 @@ Selected evidence:
 
 Settings for that run: v3.6, g = 0.85, U_MAX = 6 V, 12 V supply at 3 A, UPRIGHT_RAW = 29.82° (the final balance point, already including the trim).
 
+## 10. Swing-up
+
+<table>
+<tr>
+<td width="42%"><img src="media/swingup_setup.jpg" alt="Swing-up setup"></td>
+<td><a href="media/swingup.mp4"><img src="media/swingup.gif" alt="Swing-up video"></a></td>
+</tr>
+</table>
+
+With the stop arch off, `S` swings the bar up from hanging and catches it upright, on the same 12 V supply and 6 V limit. On 11 Nov it took **10.2 s and about 7 swings, caught on the first attempt**, then balanced at **0.05° rms** with the wheel within ±11 rad/s.
+
+### 10.1 Pumping with momentum
+
+The obvious method, push the bar along its motion, stalls at 30–60°: the wheel reaches its top speed in about 20 ms and then can't push any more, so its effort lands at the ends of the swing, where the bar hardly moves.
+
+What works is momentum conservation, the same idea as the observer. Changing the wheel's speed by Δw changes the bar's rate by
+
+$$\Delta\dot\theta = -\frac{r}{1+r}\,\Delta w$$
+
+so the wheel is **reversed each time the bar passes the bottom**, where the bar is fastest and a kick adds the most energy. Swinging the wheel from +45 to −45 rad/s adds about 1 rad/s per pass. Reaching the top needs 2λ ≈ 16.4 rad/s at the bottom, so about 14 passes.
+
+Each kick is **sized**: on the way down, the controller predicts the speed at the bottom from the bar's energy, works out the speed needed to just reach the top (plus friction on the way), and sets the wheel to +h so that reversing it to −h at the bottom gives exactly that. Early on h is capped (full pumping); the last kick is small, so the wheel arrives at the top nearly stopped. Too much energy gives a negative h, which takes energy out.
+
+### 10.2 Approach and catch
+
+- **Approach** (within 70° of upright, moving up): the wheel steers the bar onto the path that coasts exactly to the top, $\dot\theta = -2\lambda\sin(\theta/2)$.
+- **Catch:** at the top the wheel can absorb only so much momentum. The LQR of section 6 takes over only when what's left fits: $|w + \tfrac{1+r}{r}\lambda z| < 70\%$ of the wheel's top speed, with $z = \theta + \dot\theta/\lambda$ the falling mode. A miss (past 35°) goes back to pumping.
+- **Safety stops:** more than 200° from the start (over the top), 40 s without a catch, invalid tilt readings, and the space bar.
+
+### 10.3 Designed in simulation first
+
+`swingup_full.py` runs the swing-up the way the board does: 1 ms loop, the momentum observer on a delayed, noisy tilt reading with the voltage-step dips, and the slew limit. It predicted the catch at 10.5 s; the real rig did it at 10.2 s.
+
+![Simulated swing-up](figures/swingup_sim.png)
+
+*Simulated swing-up at 12 V with the identified model. The wheel reverses at every pass through the bottom (middle), the swings grow, and the LQR (green) holds it from 10.5 s.*
+
+### 10.4 What went wrong first (10 Nov)
+
+- **The bar tip hit the table** once the swings passed horizontal. The pumping stalled 40° short of the top for 20 s (that looked like extra friction, but it was the table), and the impact turned the bar's printed hub about 2° on the shaft.
+- The jolt also made the AS5048A send **error frames** (angle field 0). v4.0 read them as a real 0°, "caught" a fake angle and went over the top. v4.1 rejects error frames and stops after 20 bad readings in a row.
+- The slipped hub moved the balance point, so v4.2 adds a **hanging reference** (`HANG_RAW`): `S` and `H` re-measure the hanging reading and shift the balance point by the same amount. The fix in hardware was a clear 200 mm swing circle: stand clamped at the table edge.
+
 ---
 
-## 10. How to run it
+## 11. How to run it
 
 1. Arch on, foam on the pads. 12 V first, then USB. Serial at 115200, newline.
-2. The sketch prints `# esc1_balance v3.6` and calibrates the motor. Let the bar rest on a pad meanwhile.
+2. The sketch prints `# esc1_balance v4.2` and the supply voltage, and calibrates the motor. Let the bar rest on a pad meanwhile.
 3. Send `A` (or press the button). Status says "waiting".
 4. Lift the bar slowly to upright and hold it lightly. Within 1° for 0.3 s, the controller takes over: you feel the wheel push. Let go.
-5. Send `X` to stop. After a fall, `P` dumps the last 2 s.
-6. If cables have been re-routed, re-find the balance point: hold it where it stands by itself and send `Z`, then let the self-trim finish the job and copy its value into `UPRIGHT_RAW`.
+5. Press space to stop (or send `X`). After a stop, `P` dumps the last 2 s.
+6. If cables have been re-routed, re-find the balance point: hold it where it stands by itself and send `Z`, let it hang and send `H`, then let the self-trim finish the job and copy the printed values into `UPRIGHT_RAW` and `HANG_RAW`.
+
+**Swing-up:** stop arch off, stand clamped with a clear 200 mm circle around the pivot, bar hanging still. Click in the terminal, send `S`, keep clear. Space stops it at any time.
 
 ---
 
-## 11. Next steps
+## 12. Next steps
 
 - **Push tolerance.** More supply voltage raises the wheel's top speed and the available torque. At 19 V the identified model stays the same, but the voltage limit, the slew limit and the stop thresholds need re-checking in simulation first.
 - **Closed-loop identification.** With the bar balanced, a small known excitation added to u would identify the motor's lag directly, the one parameter the hanging tests couldn't see.
 - **The knob.** Find out why PB12 reads full scale and restore the live gain knob.
-- **A swing-up** from hanging, using the wheel to pump energy in.
+- **Done: swing-up** (section 10).
+- **Glue the hub** to the shaft, or give the shaft a flat, so the bar can't slip again.
 
 ---
 
-## 12. File index
+## 13. File index
 
 | File | Contents |
 |---|---|
-| `code/esc1_balance/esc1_balance.ino` | Balance controller v3.6; version history in its header |
+| `code/esc1_balance/esc1_balance.ino` | Balance and swing-up controller (v4.2); version history in its header |
+| `code/esc1_balance/swingup_full.py`, `swingup_sim.py` | Swing-up simulators: the firmware logic at 1 ms with sensor effects, and the quick feasibility version |
+| `code/esc1_balance/fit_closed_loop.py` | Checks the plant model against a real balancing log |
 | `code/esc1_balance/design.py`, `design2.py` | Plant model, discrete LQR, momentum-observer gains, robustness checks |
 | `code/esc1_balance/simulate.py`, `plot_sim.py` | Nonlinear closed-loop simulation and its command-line front end |
 | `code/esc1_sysid/esc1_sysid.ino` | Identification sketch (TIM2 capture) |
 | `code/esc1_sysid/sysid.py` | Record, fit, plot |
 | `cad/*.scad`, `cad/*.stl` | Pivot block v5, spacer, shim, stop arch (left and right), ESC box v3 (base and lid), wheel adapter v3, assembly |
 | `pendulum_poles.md` | Companion note: reading poles from a swing |
-| `media/` | Photo, balancing video (mp4) and its GIF preview |
+| `media/` | Photos, balancing and swing-up videos (mp4) with GIF previews |
 
 ### Key numbers
 
